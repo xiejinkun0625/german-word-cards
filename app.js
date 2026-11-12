@@ -27,6 +27,9 @@ function loadState() {
   s.prog = s.prog || {}; s.xp = s.xp || 0; s.streak = s.streak || 1;
   s.goal = s.goal || 20; s.doneToday = s.doneToday || 0; s.unitIdx = s.unitIdx || 0;
   s.lastDay = s.lastDay || '';
+  s.look = s.look || {};        // 单词查阅次数：{词索引: 次数}
+  s.cursor = s.cursor || {};    // 每个学习范围已推进到的词位置
+  s.rounds = s.rounds || {};    // 每个学习范围已背组数
   var td = dayStr(Date.now());
   if (s.lastDay !== td) { s.streak = (s.lastDay === dayStr(Date.now() - 86400000)) ? s.streak + 1 : 1; s.doneToday = 0; s.lastDay = td; }
   return s;
@@ -104,12 +107,16 @@ function tagHtml(w) {
   return h;
 }
 function showDetail(i) {
+  S.look[i] = (S.look[i] || 0) + 1;
+  save();
+  if (curView === 'search') renderSearch();
   var w = W[i];
   var ns = (NB[String(i)] || []).slice(0, 6);
   var neiHtml = ns.length ? '<div class="dt-k">邻居</div><div class="dt-nei">' + ns.map(function (j) {
     return '<button data-nei="' + j + '">' + esc(W[j].w) + '</button>'; }).join('') + '</div>' : '';
   $('detailBody').innerHTML =
-    '<div class="dt-top"><span class="dt-badge">' + esc(w.pos) + '</span><span class="dt-cefr">' + esc(w.cefr || '') + ' · ' + esc(w.deck || '') + '</span></div>' +
+    '<div class="dt-top"><span class="dt-badge">' + esc(w.pos) + '</span><span class="dt-cefr">' + esc(w.cefr || '') + ' · ' + esc(w.deck || '') + '</span>' +
+    (S.look[i] ? '<span class="dt-look">查阅 ' + S.look[i] + ' 次</span>' : '') + '</div>' +
     (w.art ? '<div class="dt-art">' + esc(w.art) + '</div>' : '') +
     '<div class="dt-word">' + esc(w.w) + '</div>' +
     (w.ipa ? '<div class="dt-ipa">〔' + esc(w.ipa) + '〕</div>' : '') +
@@ -143,6 +150,11 @@ function shuffle(a) {
   for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = a[i]; a[i] = a[j]; a[j] = t; }
   return a;
 }
+/* 确定性打散：同一批词始终得到同一顺序，轮次游标才能严格推进而不重复 */
+function stableShuffle(a) {
+  function h(i) { var x = ((i + 1) * 2654435761) % 4294967296; x ^= x >>> 13; return x; }
+  return a.slice().sort(function (x, y) { return h(x) - h(y); });
+}
 function allIdx() { var a = []; for (var i = 0; i < W.length; i++) a.push(i); return a; }
 function scopePool(scope) {
   var now = Date.now(), a = [];
@@ -158,7 +170,7 @@ function scopePool(scope) {
       else if (p2.lv < 3 && (p2.next || 0) <= now) due.push(k);
       else rest.push(k);
     }
-    a = shuffle(due).concat(shuffle(fresh), shuffle(rest));
+    a = due.concat(fresh, rest);
   }
   return a;
 }
@@ -204,13 +216,28 @@ function renderScope() {
 function pickScope(v) {
   if (v !== 'all' && !scopePool(v).length)
     v = (v === 'due' && scopePool('new').length) ? 'new' : 'all';
-  makeRound(v);
+  makeRound(v, v === curScope);   // 重点当前范围 = 从头再背；换范围 = 接着该范围进度
 }
-function makeRound(scope) {
+/* 每个学习范围有独立游标：每轮从游标处取 20 词并向后推进，
+   因此「换一组 / 继续下一组」必定拿到下一批词；游标持久化，刷新也不回到第一组。
+   走完整池后自动从头循环，并在进度标签显示当前是第几组。 */
+function makeRound(scope, restart) {
   curScope = scope || 'all';
   var pool = scopePool(curScope);
   if (!pool.length) pool = allIdx();
-  round = pool.slice(0, 20); roundPos = 0; flipped = false;
+  if (curScope === 'all' || curScope === 'new' || curScope === 'due') pool = stableShuffle(pool);
+  if (restart) { S.cursor[curScope] = 0; S.rounds[curScope] = 0; }
+  var cur = S.cursor[curScope] || 0;
+  if (cur >= pool.length) cur = 0;
+  var picks = [];
+  for (var n = 0; n < pool.length && picks.length < 20; n++) {
+    var v = pool[(cur + n) % pool.length];
+    if (picks.indexOf(v) < 0) picks.push(v);
+  }
+  round = picks; roundPos = 0; flipped = false;
+  S.cursor[curScope] = (cur + picks.length) % pool.length;
+  S.rounds[curScope] = (S.rounds[curScope] || 0) + 1;
+  save();
   renderScope();
   showCard();
 }
@@ -223,7 +250,8 @@ function renderCardTitle() {
       var q = curScope.slice(1).split('_'); t = '族 · ' + TREE[+q[0]].children[+q[1]].name;
     }
   }
-  $('spLabel').textContent = t || '';
+  var g = (curScope === 'single') ? '' : ' · 第 ' + (S.rounds[curScope] || 1) + ' 组';
+  $('spLabel').textContent = (t || '') + g;
 }
 function showCard() {
   var card = $('flashcard');
@@ -253,7 +281,7 @@ function renderProgress() {
   $('spFill').style.width = (round.length ? roundPos / round.length * 100 : 0) + '%';
 }
 function finishRound() {
-  var poolLeft = scopePool(curScope).length;
+  var poolLeft = Math.max(0, scopePool(curScope).length - (S.cursor[curScope] || 0));
   $('fcWord').textContent = '本轮完成';
   $('fcIpa').textContent = round.length + ' 张卡 · +' + (round.length * 4) + ' XP 左右';
   $('fcFront').style.pointerEvents = 'none';
@@ -262,10 +290,10 @@ function finishRound() {
   if (pendingUnit) {
     pendingUnit = false; S.unitIdx = Math.min(units.length, S.unitIdx + 1); save();
     $('spLabel').textContent = '词族闯关 +1，已解锁下一关';
-  } else $('spLabel').textContent = '本轮学习';
+  } else $('spLabel').textContent = '本轮完成 · 第 ' + (S.rounds[curScope] || 1) + ' 组';
   var nb = document.createElement('button');
   nb.id = 'btnNextRound'; nb.className = 'btn-main'; nb.type = 'button';
-  nb.textContent = poolLeft > 0 ? '继续下一组（还剩 ' + poolLeft + ' 词）' : '再来一组';
+  nb.textContent = poolLeft > 0 ? '继续下一组（还剩 ' + poolLeft + ' 词）' : '已过完一轮 · 从头再来';
   nb.onclick = function (e) { e.stopPropagation(); makeRound(curScope); };
   $('fcFront').appendChild(nb);
   setTimeout(function () { $('fcFront').style.pointerEvents = ''; }, 100);
@@ -393,34 +421,52 @@ function renderQuiz() {
 
 /* ================= 查找 ================= */
 var searchPos = '', searchMax = 220;
+function lookCount(i) { return S.look[i] || 0; }
 function renderSearch() {
   if (!SEARCH_HAY) buildIndexes();
   var q = ($('searchInput').value || '').trim().toLowerCase();
   var list = $('searchList'), keepScroll = list.scrollTop;
   var tags = [['', '全部'], ['动词', '动词'], ['名词', '名词'], ['形容词', '形容词'], ['副词', '副词'],
-    ['短语', '短语'], ['new', '未学'], ['known', '已掌握']];
+    ['短语', '短语'], ['new', '未学'], ['known', '已掌握'], ['looked', '常查阅']];
+  var lookedTotal = 0, lookedWords = 0;
+  for (var lk in S.look) { lookedTotal += S.look[lk] || 0; if (S.look[lk] > 0) lookedWords++; }
   $('searchFilters').innerHTML = tags.map(function (t) {
     return '<button class="sf-tag ' + (searchPos === t[0] ? 'on' : '') + '" data-sp="' + t[0] + '">' + t[1] + '</button>';
-  }).join('');
+  }).join('') + (lookedWords ? '<button class="sf-tag warn" id="lookReset" title="清空查阅次数统计">重置查阅</button>' : '');
   $('searchFilters').querySelectorAll('[data-sp]').forEach(function (b) {
-    b.onclick = function () { searchPos = b.dataset.sp; searchMax = 220; renderSearch(); };
+    b.onclick = function () { searchPos = b.dataset.sp; searchMax = 220; list.scrollTop = 0; renderSearch(); };
   });
-  var res = [], total = 0;
+  if ($('lookReset')) $('lookReset').onclick = function () {
+    if (!window.confirm('确定清空所有单词的查阅次数记录吗？学习进度不会受影响。')) return;
+    S.look = {}; save(); renderSearch();
+  };
+  var hits = [];
   for (var i = 0; i < W.length; i++) {
     var w = W[i];
     if (searchPos === 'new' && lvOf(i) > 0) continue;
     if (searchPos === 'known' && lvOf(i) < 3) continue;
+    if (searchPos === 'looked' && lookCount(i) < 1) continue;
     if (searchPos && ['动词', '名词', '形容词', '副词', '短语'].indexOf(searchPos) >= 0 && w.pos !== searchPos) continue;
     if (q && SEARCH_HAY[i].indexOf(q) < 0) continue;
-    total++; if (res.length < searchMax) res.push(i);
+    hits.push(i);
   }
-  $('searchCount').textContent = q ? ('命中 ' + total + ' 条') : (TOTAL.toLocaleString() + ' 词');
-  if (!res.length) { list.innerHTML = '<div class="sr-empty">没有找到匹配的单词</div>'; return; }
+  if (searchPos === 'looked') hits.sort(function (a, b) { return lookCount(b) - lookCount(a) || a - b; });
+  var total = hits.length, res = hits.slice(0, searchMax);
+  $('searchCount').textContent = searchPos === 'looked'
+    ? '常查阅 ' + total + ' 词 · 累计 ' + lookedTotal + ' 次'
+    : (q ? '命中 ' + total + ' 条' : TOTAL.toLocaleString() + ' 词');
+  if (!res.length) {
+    list.innerHTML = '<div class="sr-empty">' + (searchPos === 'looked'
+      ? '还没有查阅记录。点开任意单词详情后，这里会按查阅次数从高到低列出，方便找出反复忘记的词。'
+      : '没有找到匹配的单词') + '</div>';
+    return;
+  }
   var h = res.map(function (j) {
-    var w = W[j], lv = lvOf(j);
+    var w = W[j], lv = lvOf(j), n = lookCount(j);
     return '<button class="sr-item" data-sr="' + j + '"><span class="sr-w">' + esc(w.w) + '</span>' +
       '<span class="sr-tr">' + esc(w.tr) + '</span><span class="sr-meta">' + esc(w.pos) + ' · ' + esc(w.cefr || '') +
-      ' · ' + (lv >= 3 ? '已掌握' : lv >= 1 ? '学习中' : '未学') + '</span></button>';
+      ' · ' + (lv >= 3 ? '已掌握' : lv >= 1 ? '学习中' : '未学') + '</span>' +
+      (n ? '<span class="sr-look' + (n >= 3 ? ' hot' : '') + '">查阅 ' + n + ' 次</span>' : '') + '</button>';
   }).join('');
   if (total > res.length) h += '<button class="btn-soft sr-more" id="srMore">继续加载（还有 ' + (total - res.length) + ' 条）</button>';
   list.innerHTML = h;

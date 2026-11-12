@@ -11,7 +11,7 @@
 import os, sys, json, base64, urllib.request, urllib.error, io
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-FILES = ['index.html', 'app.js', 'app.css', 'data/words.js', 'README.md', '.nojekyll']
+FILES = ['index.html', 'app.js', 'app.css', 'data/words.js', 'README.md', '.nojekyll', 'deploy_github.py']
 TOKEN = (os.environ.get('GITHUB_TOKEN') or '').strip()
 REPO = sys.argv[1] if len(sys.argv) > 1 else 'german-word-cards'
 API = 'https://api.github.com'
@@ -48,7 +48,7 @@ def main():
     # 1. 创建公开仓库（已存在则复用）
     try:
         api('POST', '/user/repos', {
-            'name': REPO, 'description': '德语 A1–B2 词卡学习 Web App · 6,477 词',
+            'name': REPO, 'description': '德语 A1–B2 词卡学习 Web App · 6,519 词 · 三人称变位 / 查阅统计',
             'private': False, 'auto_init': False, 'homepage': '',
             'has_issues': False, 'has_projects': False, 'has_wiki': False,
         })
@@ -85,9 +85,11 @@ def main():
         tree.append({'path': f, 'mode': '100644', 'type': 'blob', 'sha': blob['sha']})
         print('  上传 %-18s %8d B' % (f, len(raw)))
 
-    tree_sha = api('POST', base + '/git/trees', {'tree': tree})['sha']
+    # 基于当前 HEAD 的 tree 增量更新，避免整树替换删掉仓库里已有的其它文件
+    base_tree = api('GET', base + '/git/commits/' + head)['tree']['sha']
+    tree_sha = api('POST', base + '/git/trees', {'base_tree': base_tree, 'tree': tree})['sha']
     commit_sha = api('POST', base + '/git/commits', {
-        'message': '德语词卡 Web App：背单词 / 闯关 / 测验 / 查找',
+        'message': '同步牌库：6,519 词 / 三人称变位 / 第二分词 / 换一组修复 / 查阅次数',
         'tree': tree_sha, 'parents': [head]})['sha']
     api('PATCH', base + '/git/refs/heads/main', {'sha': commit_sha, 'force': False})
     try:

@@ -2,9 +2,9 @@
 """德语词卡 · 一键发布到 GitHub + 开启 GitHub Pages
 
 用法（PowerShell）：
-    $env:GITHUB_TOKEN="ghp_xxx"; python deploy_github.py german-word-cards
+    $env:GITHUB_TOKEN="YOUR_PAT"; python deploy_github.py german-word-cards
 用法（Git Bash）：
-    GITHUB_TOKEN=ghp_xxx python deploy_github.py german-word-cards
+    GITHUB_TOKEN=YOUR_PAT python deploy_github.py german-word-cards
 
 令牌需要 classic PAT 的 repo 权限（含 pages）。脚本只使用 Python 标准库。
 """

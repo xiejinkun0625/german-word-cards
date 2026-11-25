@@ -46,7 +46,7 @@ def main():
     print('账号：', me)
 
     base = '/repos/%s/%s' % (me, REPO)
-    DESC = '德语 A1–B2 词卡学习 Web App · 6,770 词 · 三人称变位 / 查阅统计'
+    DESC = '德语 A1–B2 词卡学习 Web App · 6,967 词 · TestDaF/B2 阅读保险词表 · 三人称变位 / 查阅统计'
 
     # 1. 仓库已存在则复用；仅在确实不存在时才创建
     #    （fine-grained PAT 通常没有建库权限，直接 POST 会 403）
@@ -97,7 +97,7 @@ def main():
     base_tree = api('GET', base + '/git/commits/' + head)['tree']['sha']
     tree_sha = api('POST', base + '/git/trees', {'base_tree': base_tree, 'tree': tree})['sha']
     commit_sha = api('POST', base + '/git/commits', {
-        'message': '同步牌库：6,770 词 / B2 教材新词 196 / 多义义项补充 / 三人称变位 / 第二分词',
+        'message': '同步牌库：6,967 词 / B2 阅读保险拓展 198 词（TestDaF 学术通用语 + 七大主题域）',
         'tree': tree_sha, 'parents': [head]})['sha']
     api('PATCH', base + '/git/refs/heads/main', {'sha': commit_sha, 'force': False})
     try:

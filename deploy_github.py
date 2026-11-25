@@ -45,20 +45,28 @@ def main():
     me = api('GET', '/user')['login']
     print('账号：', me)
 
-    # 1. 创建公开仓库（已存在则复用）
+    base = '/repos/%s/%s' % (me, REPO)
+    DESC = '德语 A1–B2 词卡学习 Web App · 6,770 词 · 三人称变位 / 查阅统计'
+
+    # 1. 仓库已存在则复用；仅在确实不存在时才创建
+    #    （fine-grained PAT 通常没有建库权限，直接 POST 会 403）
     try:
+        api('GET', base)
+        print('仓库已存在，复用：', REPO)
+    except RuntimeError as e:
+        if 'HTTP 404' not in str(e):
+            raise
         api('POST', '/user/repos', {
-            'name': REPO, 'description': '德语 A1–B2 词卡学习 Web App · 6,574 词 · 三人称变位 / 查阅统计',
+            'name': REPO, 'description': DESC,
             'private': False, 'auto_init': False, 'homepage': '',
             'has_issues': False, 'has_projects': False, 'has_wiki': False,
         })
         print('仓库已创建：', REPO)
-    except RuntimeError as e:
-        if 'HTTP 422' not in str(e):
-            raise
-        print('仓库已存在，复用：', REPO)
-
-    base = '/repos/%s/%s' % (me, REPO)
+    # 同步仓库描述（无 administration 权限时忽略）
+    try:
+        api('PATCH', base, {'description': DESC})
+    except RuntimeError:
+        pass
 
     # 空仓库没有 git 数据库，先用 Contents API 建立一个初始提交
     head = None
@@ -89,7 +97,7 @@ def main():
     base_tree = api('GET', base + '/git/commits/' + head)['tree']['sha']
     tree_sha = api('POST', base + '/git/trees', {'base_tree': base_tree, 'tree': tree})['sha']
     commit_sha = api('POST', base + '/git/commits', {
-        'message': '同步牌库：6,574 词 / 三人称变位 / 第二分词 / 换一组修复 / 查阅次数',
+        'message': '同步牌库：6,770 词 / B2 教材新词 196 / 多义义项补充 / 三人称变位 / 第二分词',
         'tree': tree_sha, 'parents': [head]})['sha']
     api('PATCH', base + '/git/refs/heads/main', {'sha': commit_sha, 'force': False})
     try:
@@ -98,18 +106,17 @@ def main():
         pass
     print('代码已推送到 main')
 
-    # 3. 开启 GitHub Pages
+    # 3. 开启 GitHub Pages（已存在则直接复用，避免 fine-grained PAT 的 POST 403）
     pages_url = None
     try:
+        pages_url = api('GET', base + '/pages')['html_url']
+        print('Pages 已存在，复用')
+    except RuntimeError as e:
+        if 'HTTP 404' not in str(e):
+            raise
         pages_url = api('POST', base + '/pages', {
             'build_type': 'legacy', 'source': {'branch': 'main', 'path': '/'}})['html_url']
         print('Pages 已开启')
-    except RuntimeError as e:
-        if 'HTTP 409' in str(e):
-            pages_url = api('GET', base + '/pages')['html_url']
-            print('Pages 已存在，复用')
-        else:
-            raise
 
     print('\n完成：')
     print('  仓库  https://github.com/%s/%s' % (me, REPO))
